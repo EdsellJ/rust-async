@@ -1,26 +1,42 @@
-use tokio;
-use std::thread;
+use tokio::sync::Semaphore;
+use tokio::task;
+use reqwest;
+use std::sync::Arc;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main]
 async fn main() {
-    let num_threads = thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    
-    println!("Running with {} threads", num_threads);
-    
+    let urls = vec![
+        "https://example.com",
+        "https://www.rust-lang.org",
+        "https://www.wikipedia.org",
+        "https://www.github.com",
+    ];
+
+    let semaphore = Arc::new(Semaphore::new(2)); // Allow max 2 concurrent tasks
+
     let mut handles = vec![];
 
-    // Spawn tasks equal to number of physical threads
-    for i in 1..=num_threads {
-        let handle = tokio::spawn(async move {
-            println!("Thread {} is running", i);
+    for url in urls {
+        let permit = semaphore.clone().acquire_owned().await.unwrap(); // Acquire a permit
+        let handle = task::spawn(async move {
+            let _permit = permit; // Keep it in scope to avoid early drop
+            match fetch_page(url).await {
+                Ok(content) => println!("✅ Fetched {} ({} bytes)", url, content.len()),
+                Err(err) => println!("❌ Failed {}: {}", url, err),
+            }
         });
+
         handles.push(handle);
     }
 
-    // Wait for all tasks to complete
     for handle in handles {
         handle.await.unwrap();
     }
 }
+
+async fn fetch_page(url: &str) -> Result<String, reqwest::Error> {
+    let response = reqwest::get(url).await?;
+    let body = response.text().await?;
+    Ok(body)
+}
+
